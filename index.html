@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NumWriting | 실시간 손글씨 숫자 인식기</title>
+    <meta name="description" content="PC-ALM 신경망 기반 브라우저 실시간 손글씨 숫자 인식 및 온디바이스 연속 학습">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./css/style.css?v=1.6">
+</head>
+<body>
+    <div class="screen-container">
+        <!-- Ultra-Compact Top Bar (No big titles, saves maximum vertical space) -->
+        <header class="micro-header">
+            <div class="header-left">
+                <span class="app-logo">NW</span>
+                <span class="status-chip" id="statusBadge">
+                    <span class="status-dot"></span>
+                    <span id="statusText">준비됨</span>
+                </span>
+            </div>
+            <div class="header-right">
+                <button id="openDbModalBtn" class="btn-db-chip" title="학습 데이터 관리">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path></svg>
+                    <span>DB <strong id="dbCountBadge">0</strong></span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace (Canvas & Result immediately visible) -->
+        <main class="main-workspace">
+            <!-- Canvas Section -->
+            <section class="workspace-section canvas-section">
+                <div class="canvas-box">
+                    <canvas id="drawCanvas" width="280" height="280"></canvas>
+                </div>
+
+                <!-- Quick Canvas Toolbar -->
+                <div class="canvas-quick-bar">
+                    <button id="clearBtn" class="btn-tool" title="캔버스 지우기">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path></svg>
+                        지우기
+                    </button>
+                    <button id="randomMnistBtn" class="btn-tool" title="랜덤 MNIST 손글씨">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        랜덤
+                    </button>
+                    <div class="pen-control">
+                        <input type="range" id="penSize" min="14" max="32" value="22" title="브러시 두께">
+                        <span id="penSizeVal" class="pen-val">22px</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recognition & Learning Section (Immediately beside or right below) -->
+            <section class="workspace-section result-section">
+                <!-- Big Hero Result Card -->
+                <div class="hero-result-card">
+                    <div class="hero-digit-display">
+                        <span class="digit-hero" id="predictedDigit">-</span>
+                    </div>
+                    <div class="hero-details">
+                        <div class="confidence-tag" id="confidenceBadge">신뢰도 0.0%</div>
+                        <div class="latency-text">레이턴시 <strong id="inferenceTime">0.05 ms</strong></div>
+                        <p class="hero-msg" id="predictionDesc">숫자를 그리면 즉시 인식합니다</p>
+                    </div>
+                </div>
+
+                <!-- One-Touch Correction & Learning -->
+                <div class="correction-card">
+                    <div class="correction-label">
+                        <span>틀렸나요? 정답 선택 후 즉시 학습:</span>
+                    </div>
+                    
+                    <div class="pill-group-10" id="digitButtons">
+                        <button class="btn-digit" data-digit="0">0</button>
+                        <button class="btn-digit" data-digit="1">1</button>
+                        <button class="btn-digit" data-digit="2">2</button>
+                        <button class="btn-digit" data-digit="3">3</button>
+                        <button class="btn-digit" data-digit="4">4</button>
+                        <button class="btn-digit" data-digit="5">5</button>
+                        <button class="btn-digit" data-digit="6">6</button>
+                        <button class="btn-digit" data-digit="7">7</button>
+                        <button class="btn-digit" data-digit="8">8</button>
+                        <button class="btn-digit" data-digit="9">9</button>
+                    </div>
+
+                    <button id="adaptBtn" class="btn-learn" disabled>
+                        <span>정답 [<strong id="targetDigitLabel">?</strong>]로 즉시 학습</span>
+                    </button>
+
+                    <!-- Learning Feedback Toast -->
+                    <div id="adaptationFeedback" class="feedback-toast hidden">
+                        <div class="toast-check">✓</div>
+                        <div class="toast-msg">
+                            <div class="toast-line-top">
+                                <span class="old-p" id="fbOldPred">-</span> ➜ <strong class="new-p" id="fbNewPred">-</strong>
+                                <span class="toast-diff-badge" id="fbProbDiff">+0%</span>
+                            </div>
+                            <div class="toast-line-bottom">브라우저 DB 모델 가중치 저장 완료</div>
+                        </div>
+                        <span id="fbLossVal" class="hidden"></span>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Model Heatmap Action Trigger -->
+        <section class="heatmap-action-section">
+            <button id="openHeatmapBtn" class="btn-heatmap-trigger" title="계층별 활성화 및 가중치 히트맵 보기">
+                <div class="btn-heatmap-content">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="3" width="7" height="7"></rect>
+                        <rect x="14" y="14" width="7" height="7"></rect>
+                        <rect x="3" y="14" width="7" height="7"></rect>
+                    </svg>
+                    <span>모델 계층별 히트맵 보기</span>
+                </div>
+                <span class="heatmap-live-pill">실시간 LIVE</span>
+            </button>
+        </section>
+
+        <!-- Secondary Details (Cleanly below the fold, out of the way) -->
+        <section class="secondary-section">
+            <details class="details-accordion">
+                <summary class="details-summary">
+                    <span>확률 분포 &amp; 모델 역학 보기</span>
+                    <span class="summary-arrow">▾</span>
+                </summary>
+                
+                <div class="details-body">
+                    <!-- 28x28 Preview -->
+                    <div class="preview-line">
+                        <canvas id="miniCanvas" width="28" height="28"></canvas>
+                        <div class="preview-text">
+                            <strong>28×28 CoM 정규화 텐서</strong>
+                            <span>질량 중심 (13.5, 13.5) 자동 정렬</span>
+                        </div>
+                    </div>
+
+                    <!-- Softmax Probabilities 0-9 -->
+                    <div class="prob-container">
+                        <div class="prob-header">
+                            <span>클래스별 확률 분포 (Softmax)</span>
+                            <span id="topProbVal">0.0%</span>
+                        </div>
+                        <div class="prob-grid" id="probBars">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Diagnostics & Model Management -->
+                    <div class="diag-container">
+                        <div class="diag-header">PC-ALM 은닉층 활성화</div>
+                        <div class="diag-gauge-row">
+                            <span>L1 (128)</span>
+                            <div class="gauge-track"><div id="gaugeH1" class="gauge-bar" style="width:0%"></div></div>
+                            <span id="gaugeH1Val">0.00</span>
+                        </div>
+                        <div class="diag-gauge-row">
+                            <span>L2 (64)</span>
+                            <div class="gauge-track"><div id="gaugeH2" class="gauge-bar" style="width:0%"></div></div>
+                            <span id="gaugeH2Val">0.00</span>
+                        </div>
+                        <div class="diag-gauge-row">
+                            <span>L3 (10)</span>
+                            <div class="gauge-track"><div id="gaugeH3" class="gauge-bar" style="width:0%"></div></div>
+                            <span id="gaugeH3Val">0.00</span>
+                        </div>
+
+                        <div class="diag-stats-row">
+                            <span>||r||<sub>max</sub>: <strong id="maxErrorVal">0.0000</strong></span>
+                            <span>||λ||<sub>max</sub>: <strong id="maxLambdaVal">0.0000</strong></span>
+                        </div>
+
+                        <div class="diag-actions">
+                            <button id="saveModelBtn" class="btn-sub">가중치 저장</button>
+                            <button id="resetWeightsBtn" class="btn-sub">모델 초기화</button>
+                            <button id="downloadBinBtn" class="btn-sub">.bin 다운로드</button>
+                        </div>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <!-- IndexedDB Modal -->
+        <div id="dbModal" class="modal-backdrop hidden" aria-hidden="true">
+            <div class="modal-window">
+                <div class="modal-header">
+                    <div>
+                        <h3>브라우저 데이터베이스 (IndexedDB)</h3>
+                        <p>브라우저에 로컬 영구 저장된 학습 데이터와 맞춤 가중치</p>
+                    </div>
+                    <button id="closeDbModalBtn" class="btn-close">&times;</button>
+                </div>
+
+                <div class="modal-stats">
+                    <div>학습된 샘플: <strong id="dbTotalCount">0개</strong></div>
+                    <div>가중치: <strong id="dbWeightsStatus">기본</strong></div>
+                    <span id="dbLastUpdate" class="hidden"></span>
+                </div>
+
+                <div class="modal-toolbar">
+                    <button id="exportDbBtn" class="btn-sub">JSON 백업</button>
+                    <label for="importDbInput" class="btn-sub cursor-pointer">JSON 복원</label>
+                    <input type="file" id="importDbInput" accept=".json" class="hidden">
+                    <button id="clearDbBtn" class="btn-sub btn-danger">기록 비우기</button>
+                </div>
+
+                <div class="modal-scroll-area">
+                    <div id="dbHistoryList" class="history-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Heatmap Modal -->
+        <div id="heatmapModal" class="modal-backdrop hidden" aria-hidden="true">
+            <div class="modal-window heatmap-window">
+                <div class="modal-header">
+                    <div>
+                        <h3>신경망 계층별 히트맵 (Heatmap)</h3>
+                        <p>PC-ALM 모델의 계층별 실시간 뉴런 활성화 및 가중치 매트릭스</p>
+                    </div>
+                    <button id="closeHeatmapModalBtn" class="btn-close" aria-label="닫기">&times;</button>
+                </div>
+
+                <!-- Heatmap Navigation Tabs -->
+                <div class="heatmap-tab-bar">
+                    <button class="heatmap-tab-btn active" data-tab="activations">실시간 활성화 (128 / 64 / 10)</button>
+                    <button class="heatmap-tab-btn" data-tab="weights">가중치 매트릭스 (W0 / W1 / W2)</button>
+                    <button class="heatmap-tab-btn" data-tab="filters">L0 특징 수용장 (28×28)</button>
+                </div>
+
+                <div class="heatmap-modal-body">
+                    <!-- Tab 1: Real-time Layer Activations -->
+                    <div id="tabActivations" class="heatmap-tab-pane active">
+                        <div class="heatmap-pane-header">
+                            <span class="pane-title">현재 손글씨 입력에 대한 은닉층 발화 반응</span>
+                            <span class="live-dot-indicator"><span class="pulse-dot-green"></span>실시간 갱신 중</span>
+                        </div>
+
+                        <!-- Layer 1: 128 Neurons (16x8 grid) -->
+                        <div class="layer-heatmap-card">
+                            <div class="layer-card-title">
+                                <strong>Layer 1 은닉층</strong> (128 뉴런, 16×8 격자)
+                                <span class="layer-meta" id="l1Meta">평균 활성화: 0.00</span>
+                            </div>
+                            <div class="canvas-wrap-heat">
+                                <canvas id="heatCanvasL1" width="320" height="160"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Layer 2: 64 Neurons (8x8 grid) -->
+                        <div class="layer-heatmap-card">
+                            <div class="layer-card-title">
+                                <strong>Layer 2 은닉층</strong> (64 뉴런, 8×8 격자)
+                                <span class="layer-meta" id="l2Meta">평균 활성화: 0.00</span>
+                            </div>
+                            <div class="canvas-wrap-heat">
+                                <canvas id="heatCanvasL2" width="240" height="240"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Layer 3: Output (10 Classes) -->
+                        <div class="layer-heatmap-card">
+                            <div class="layer-card-title">
+                                <strong>Layer 3 출력층</strong> (10 클래스 반응)
+                                <span class="layer-meta" id="l3Meta">최대 활성화: -</span>
+                            </div>
+                            <div class="canvas-wrap-heat">
+                                <canvas id="heatCanvasL3" width="320" height="48"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Heatmap Legend -->
+                        <div class="heatmap-legend-row">
+                            <span>비활성 (0.0)</span>
+                            <div class="legend-bar-activation"></div>
+                            <span>강한 활성화 (Max)</span>
+                        </div>
+                    </div>
+
+                    <!-- Tab 2: Weight Matrices -->
+                    <div id="tabWeights" class="heatmap-tab-pane">
+                        <div class="heatmap-pane-header">
+                            <span class="pane-title">계층별 파라미터 가중치 분포</span>
+                            <div class="weight-layer-select-box">
+                                <label for="weightLayerSelect">계층 선택:</label>
+                                <select id="weightLayerSelect">
+                                    <option value="2">Layer 2: 10×64 (클래스 결정 가중치)</option>
+                                    <option value="1">Layer 1: 64×128 (은닉 간 가중치)</option>
+                                    <option value="0">Layer 0: 128×784 (입력 특징 가중치)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="layer-heatmap-card">
+                            <div class="layer-card-title">
+                                <strong id="weightMatrixTitle">Layer 2 가중치 (10행 × 64열)</strong>
+                                <span class="layer-meta" id="weightMeta">범위: -0.00 ~ +0.00</span>
+                            </div>
+                            <div class="canvas-wrap-heat">
+                                <canvas id="heatCanvasWeights" width="320" height="200"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Diverging Legend -->
+                        <div class="heatmap-legend-row">
+                            <span>음의 가중치 (-)</span>
+                            <div class="legend-bar-weight"></div>
+                            <span>양의 가중치 (+)</span>
+                        </div>
+                    </div>
+
+                    <!-- Tab 3: Receptive Fields / Filter Viewer -->
+                    <div id="tabFilters" class="heatmap-tab-pane">
+                        <div class="heatmap-pane-header">
+                            <span class="pane-title">Layer 0 개별 뉴런 공간 수용장 (28×28 필터)</span>
+                        </div>
+
+                        <div class="filter-control-row">
+                            <label for="filterNeuronSlider">뉴런 선택 (0~127):</label>
+                            <input type="range" id="filterNeuronSlider" min="0" max="127" value="0">
+                            <span id="filterNeuronIndex" class="neuron-badge">#0</span>
+                        </div>
+
+                        <div class="filter-display-wrap">
+                            <canvas id="filterCanvas28" width="196" height="196"></canvas>
+                            <div class="filter-desc-box">
+                                <div class="filter-stat-line">
+                                    <span>검출 패턴:</span>
+                                    <strong id="filterPatternDesc">시각 에지 및 획 특징 필터</strong>
+                                </div>
+                                <div class="filter-stat-line">
+                                    <span>가중치 최소/최대:</span>
+                                    <strong id="filterWeightRange">0.00 / 0.00</strong>
+                                </div>
+                                <p class="filter-tip">슬라이더를 움직여 128개 은닉 뉴런 각각이 28×28 입력 이미지의 어떤 공간 위치와 선(Stroke) 패턴을 감지하는지 시각적으로 확인할 수 있습니다.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Tooltip -->
+                <div id="heatmapTooltip" class="heatmap-tooltip hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="./js/default_weights.js?v=1.6"></script>
+    <script src="./js/mnist_samples.js?v=1.6"></script>
+    <script src="./js/pcalm.js?v=1.6"></script>
+    <script src="./js/db.js?v=1.6"></script>
+    <script src="./js/app.js?v=1.6"></script>
+</body>
+</html>
